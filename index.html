@@ -471,10 +471,24 @@
   <div id="full-task-list"></div>
 </div>
 
-<script>
-// --- Data & state ---
-const STORAGE_KEY = 'dashboard_tasks_v1';
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
+const firebaseConfig = {
+  apiKey: "AIzaSyDmCrIB31ZigcqVTqsS9YLBsfNkC_vFksM",
+  authDomain: "moj-dashboard.firebaseapp.com",
+  projectId: "moj-dashboard",
+  storageBucket: "moj-dashboard.firebasestorage.app",
+  messagingSenderId: "695952275925",
+  appId: "1:695952275925:web:501bfe30816080f557a55c"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const tasksCol = collection(db, 'tasks');
+
+// --- Data & state ---
 function gradeColor(avg) {
   if (avg >= 5.0) return '#0F6E56';
   if (avg >= 4.0) return '#3B8BD4';
@@ -482,46 +496,57 @@ function gradeColor(avg) {
   return '#A32D2D';
 }
 const subjects = [
-  { name: 'Język angielski', avg: 4.00 },       // 4,4,4
-  { name: 'Historia', avg: 4.50 },              // 5,5,4,4 (0 = brak zadania, nie liczone)
-  { name: 'Proj. i admin. baz danych', avg: 4.67 }, // 4,5,5
-  { name: 'Chemia', avg: 4.89 },                // 6,5,5,5,5,4,5,4,5
-  { name: 'Matematyka', avg: 3.00 },            // 4,3,2,3
-  { name: 'Język niemiecki', avg: 4.00 },        // 5,3,3,5
-  { name: 'Ang. w branży teleinf.', avg: 4.00 },// 5,3,3,5 (bez "nie liczona")
-  { name: 'Wychowanie fizyczne', avg: 5.00 },   // 5,5,5
-  { name: 'Historia i teraźniejszość', avg: 5.33 }, // 6,5,5
-  { name: 'Język polski', avg: 2.67 },          // 1,3,4
-  { name: 'Sieci komputerowe', avg: 4.80 },     // 5,5,5,4,5
-  { name: 'Proj. stron internetowych', avg: 3.67 }, // 5,3,3
-  { name: 'Informatyka', avg: 4.50 },           // 4,5 (bez "np")
-  { name: 'Prog. aplikacji internet.', avg: 5.00 }, // 5,5
+  { name: 'Język angielski', avg: 4.00 },
+  { name: 'Historia', avg: 4.50 },
+  { name: 'Proj. i admin. baz danych', avg: 4.67 },
+  { name: 'Chemia', avg: 4.89 },
+  { name: 'Matematyka', avg: 3.00 },
+  { name: 'Język niemiecki', avg: 4.00 },
+  { name: 'Ang. w branży teleinf.', avg: 4.00 },
+  { name: 'Wychowanie fizyczne', avg: 5.00 },
+  { name: 'Historia i teraźniejszość', avg: 5.33 },
+  { name: 'Język polski', avg: 2.67 },
+  { name: 'Sieci komputerowe', avg: 4.80 },
+  { name: 'Proj. stron internetowych', avg: 3.67 },
+  { name: 'Informatyka', avg: 4.50 },
+  { name: 'Prog. aplikacji internet.', avg: 5.00 },
 ].map(s => ({ ...s, pct: Math.round(s.avg/6*100), color: gradeColor(s.avg) }));
 
-const TASKS_VERSION = 'v2';
-if (localStorage.getItem(STORAGE_KEY + '_version') !== TASKS_VERSION) {
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.setItem(STORAGE_KEY + '_version', TASKS_VERSION);
-}
+let tasks = [];
+let activeFilter = 'all';
+let fullFilter = 'all';
 
-let tasks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-if (!tasks.length) {
-  tasks = [
-    { id: 1, title: 'Sprawdzian z matematyki — geometria analityczna', tag: 'Szkoła', done: false, urgent: true, deadline: '31 marca' },
-    { id: 2, title: 'Powtórka do sprawdzianu z matmy', tag: 'Nauka', done: false, urgent: true, deadline: '31 marca' },
-    { id: 3, title: 'Zadanie domowe z angielskiego — mówienie ustnie', tag: 'Szkoła', done: false, urgent: true, deadline: '3 kwietnia' },
-    { id: 4, title: 'Prezentacja na chemię', tag: 'Szkoła', done: false, urgent: false, deadline: '7 kwietnia' },
-    { id: 5, title: 'Prezentacja na angielski zawodowy', tag: 'Szkoła', done: false, urgent: false, deadline: '7 kwietnia' },
-    { id: 6, title: 'Kartkówka z chemii — kwasy karboksylowe i estry', tag: 'Szkoła', done: false, urgent: false, deadline: '8 kwietnia' },
-    { id: 7, title: 'Sprawdzian z języka polskiego — Lalka', tag: 'Szkoła', done: false, urgent: false, deadline: '13 kwietnia' },
-  ];
-  save();
-}
+// --- Firebase sync ---
+const DEFAULT_TASKS = [
+  { title: 'Sprawdzian z matematyki — geometria analityczna', tag: 'Szkoła', done: false, urgent: true, deadline: '31 marca' },
+  { title: 'Powtórka do sprawdzianu z matmy', tag: 'Nauka', done: false, urgent: true, deadline: '31 marca' },
+  { title: 'Zadanie domowe z angielskiego — mówienie ustnie', tag: 'Szkoła', done: false, urgent: true, deadline: '3 kwietnia' },
+  { title: 'Prezentacja na chemię', tag: 'Szkoła', done: false, urgent: false, deadline: '7 kwietnia' },
+  { title: 'Prezentacja na angielski zawodowy', tag: 'Szkoła', done: false, urgent: false, deadline: '7 kwietnia' },
+  { title: 'Kartkówka z chemii — kwasy karboksylowe i estry', tag: 'Szkoła', done: false, urgent: false, deadline: '8 kwietnia' },
+  { title: 'Sprawdzian z języka polskiego — Lalka', tag: 'Szkoła', done: false, urgent: false, deadline: '13 kwietnia' },
+];
+
+// Show loading state
+document.getElementById('task-list').innerHTML = '<div class="empty">Ładowanie zadań... ⏳</div>';
+document.getElementById('full-task-list').innerHTML = '<div class="empty">Ładowanie... ⏳</div>';
+
+// Listen to Firestore in real-time
+onSnapshot(tasksCol, async (snapshot) => {
+  if (snapshot.empty) {
+    // First run — seed default tasks
+    for (const t of DEFAULT_TASKS) {
+      await addDoc(tasksCol, t);
+    }
+    return;
+  }
+  tasks = snapshot.docs.map(d => ({ ...d.data(), _id: d.id }));
+  render();
+  renderFullList();
+  renderStats();
+});
 
 // --- Helpers ---
-function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); }
-function nextId() { return tasks.length ? Math.max(...tasks.map(t=>t.id)) + 1 : 1; }
-
 function tagClass(tag) {
   return { 'Szkoła': 'tag-purple', 'Projekt': 'tag-teal', 'Nauka': 'tag-amber', 'Inne': 'tag-green' }[tag] || 'tag-green';
 }
@@ -551,43 +576,51 @@ function deadlineBadge(deadlineStr) {
   return `<span class="task-tag tag-green">za ${d} dni</span>`;
 }
 
+function taskRow(t, extraStyle='') {
+  return `
+    <div class="task-item${t.done ? ' done' : ''}" style="margin-bottom:8px${extraStyle}">
+      <div class="task-check" onclick="toggleTask('${t._id}',${t.done})"></div>
+      <div style="flex:1">
+        <div class="task-title">
+          ${t.title}
+          <span class="task-tag ${tagClass(t.tag)}">${t.tag}</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center">
+          ${t.deadline ? `<span class="task-meta" style="margin:0">📅 ${t.deadline}</span>` : ''}
+          ${!t.done ? deadlineBadge(t.deadline) : '<span class="task-tag tag-green">✓ gotowe</span>'}
+        </div>
+      </div>
+      <div style="font-size:18px;cursor:pointer;opacity:0.4" onclick="deleteTask('${t._id}')">×</div>
+    </div>
+  `;
+}
+
 // --- Render ---
+function sortTasks(arr) {
+  return [...arr].sort((a, b) => {
+    if (a.done !== b.done) return a.done - b.done;
+    return (daysLeft(a.deadline) ?? 999) - (daysLeft(b.deadline) ?? 999);
+  });
+}
+
 function render() {
   const visible = activeFilter === 'all' ? tasks : tasks.filter(t => t.tag === activeFilter);
   const list = document.getElementById('task-list');
-  list.innerHTML = '';
+  if (!visible.length) { list.innerHTML = '<div class="empty">Brak zadań 🎉</div>'; return; }
+  list.innerHTML = sortTasks(visible).map(t => taskRow(t)).join('');
+}
 
-  if (!visible.length) {
-    list.innerHTML = '<div class="empty">Brak zadań w tej kategorii 🎉</div>';
-  } else {
-    visible.sort((a, b) => {
-      if (a.done !== b.done) return a.done - b.done;
-      const da = daysLeft(a.deadline) ?? 999;
-      const db = daysLeft(b.deadline) ?? 999;
-      return da - db;
-    });
-    visible.forEach(t => {
-      const el = document.createElement('div');
-      el.className = 'task-item' + (t.done ? ' done' : '');
-      el.innerHTML = `
-        <div class="task-check" onclick="toggle(${t.id})"></div>
-        <div style="flex:1">
-          <div class="task-title">
-            ${t.title}
-            <span class="task-tag ${tagClass(t.tag)}">${t.tag}</span>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center">
-            ${t.deadline ? `<span class="task-meta" style="margin:0">📅 ${t.deadline}</span>` : ''}
-            ${!t.done ? deadlineBadge(t.deadline) : ''}
-          </div>
-        </div>
-        <div style="font-size:18px;cursor:pointer;opacity:0.4" onclick="removeTask(${t.id})" title="Usuń">×</div>
-      `;
-      list.appendChild(el);
-    });
-  }
+function renderFullList() {
+  const list = document.getElementById('full-task-list');
+  if (!list) return;
+  let visible = [...tasks];
+  if (fullFilter === 'todo') visible = visible.filter(t => !t.done);
+  if (fullFilter === 'done') visible = visible.filter(t => t.done);
+  if (!visible.length) { list.innerHTML = '<div class="empty">Brak zadań 🎉</div>'; return; }
+  list.innerHTML = sortTasks(visible).map(t => taskRow(t)).join('');
+}
 
-  // Stats
+function renderStats() {
   const todo = tasks.filter(t => !t.done).length;
   const done = tasks.filter(t => t.done).length;
   const urgent = tasks.filter(t => !t.done && (daysLeft(t.deadline) ?? 999) <= 3).length;
@@ -612,91 +645,95 @@ function renderSubjects() {
   `).join('');
 }
 
-// --- Actions ---
-function toggle(id) {
-  const t = tasks.find(t => t.id === id);
-  if (t) { t.done = !t.done; save(); render(); renderFullList(); }
-}
+// --- Firebase Actions (exposed globally) ---
+window.toggleTask = async (id, currentDone) => {
+  await updateDoc(doc(db, 'tasks', id), { done: !currentDone });
+};
 
-function removeTask(id) {
-  tasks = tasks.filter(t => t.id !== id);
-  save(); render(); renderFullList();
-}
+window.deleteTask = async (id) => {
+  await deleteDoc(doc(db, 'tasks', id));
+};
 
-function addTask() {
+window.addTask = async () => {
   const input = document.getElementById('task-input');
   const deadlineInput = document.getElementById('task-deadline');
   const tagSelect = document.getElementById('task-tag-select');
   const val = input.value.trim();
   if (!val) return;
-
   const tag = tagSelect ? tagSelect.value : 'Inne';
   const deadline = deadlineInput ? deadlineInput.value.trim() : '';
   const urgent = (daysLeft(deadline) ?? 999) <= 3;
-
-  tasks.push({ id: nextId(), title: val, tag, done: false, urgent, deadline: deadline || undefined });
+  await addDoc(tasksCol, { title: val, tag, done: false, urgent, deadline: deadline || '' });
   input.value = '';
   if (deadlineInput) deadlineInput.value = '';
-  save(); render(); renderFullList();
-}
+};
 
-let activeFilter = 'all';
-let fullFilter = 'all';
-
-function renderFullList() {
-  const list = document.getElementById('full-task-list');
-  if (!list) return;
-  let visible = [...tasks];
-  if (fullFilter === 'todo') visible = visible.filter(t => !t.done);
-  if (fullFilter === 'done') visible = visible.filter(t => t.done);
-
-  visible.sort((a, b) => {
-    if (a.done !== b.done) return a.done - b.done;
-    const da = daysLeft(a.deadline) ?? 999;
-    const db = daysLeft(b.deadline) ?? 999;
-    return da - db;
-  });
-
-  if (!visible.length) {
-    list.innerHTML = '<div class="empty">Brak zadań 🎉</div>';
-    return;
-  }
-
-  list.innerHTML = visible.map(t => `
-    <div class="task-item${t.done ? ' done' : ''}" style="margin-bottom:8px">
-      <div class="task-check" onclick="toggle(${t.id})"></div>
-      <div style="flex:1">
-        <div class="task-title">
-          ${t.title}
-          <span class="task-tag ${tagClass(t.tag)}">${t.tag}</span>
-        </div>
-        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center">
-          ${t.deadline ? `<span class="task-meta" style="margin:0">📅 ${t.deadline}</span>` : ''}
-          ${!t.done ? deadlineBadge(t.deadline) : '<span class="task-tag tag-green">✓ gotowe</span>'}
-        </div>
-      </div>
-      <div style="font-size:18px;cursor:pointer;opacity:0.4" onclick="removeTask(${t.id})">×</div>
-    </div>
-  `).join('');
-}
-
-function filterFull(filter, btn) {
-  fullFilter = filter;
-  document.querySelectorAll('[id^="full-btn-"]').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  renderFullList();
-}
-
-function filterTasks(filter, btn) {
+window.filterTasks = (filter, btn) => {
   activeFilter = filter;
   document.querySelectorAll('.filter-bar .filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   render();
+};
+
+window.filterFull = (filter, btn) => {
+  fullFilter = filter;
+  document.querySelectorAll('[id^="full-btn-"]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderFullList();
+};
+
+// --- Grade Calculator ---
+window.calcGrade = () => {
+  const currentAvg = parseFloat(document.getElementById('calc-subject').value);
+  const target = parseFloat(document.getElementById('calc-target').value);
+  const futureCount = parseInt(document.getElementById('calc-future').value) || 1;
+  const resultEl = document.getElementById('calc-result');
+  const inner = document.getElementById('calc-result-inner');
+  resultEl.style.display = 'block';
+  const rows = [];
+  for (let n = 1; n <= 8; n++) {
+    const needed = (target * (n + futureCount) - currentAvg * n) / futureCount;
+    if (needed >= 1 && needed <= 6) rows.push({ n, needed });
+  }
+  if (!rows.length) {
+    inner.innerHTML = `<div style="color:var(--red)">Cel poza zasięgiem przy obecnych ocenach.</div>`;
+    return;
+  }
+  const best = rows[Math.floor(rows.length / 2)];
+  const needed = best.needed;
+  const color = needed <= 3 ? 'var(--teal)' : needed <= 4.5 ? 'var(--amber)' : 'var(--red)';
+  const emoji = needed <= 3 ? '😊' : needed <= 4.5 ? '💪' : '🔥';
+  const comment = needed <= 2 ? 'Łatwe do osiągnięcia!' : needed <= 3.5 ? 'Realne przy solidnej nauce.' : needed <= 4.5 ? 'Wymagające, ale możliwe.' : needed <= 5.5 ? 'Bardzo trudne — przyłóż się!' : 'Praktycznie niemożliwe — rozważ niższy cel.';
+  inner.innerHTML = `
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">
+      Obecna średnia: <strong>${currentAvg.toFixed(2).replace('.',',')}</strong> · Cel: <strong>${target.toFixed(1).replace('.',',')}</strong> · Kolejne oceny: <strong>${futureCount}</strong>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+      <div style="font-size:42px;font-weight:500;color:${color}">${needed.toFixed(1).replace('.',',')}</div>
+      <div>
+        <div style="font-size:15px;font-weight:500">musisz dostać średnio ${emoji}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:2px">${comment}</div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);padding-top:10px;border-top:1px solid var(--border)">
+      Przy ocenie <strong>${Math.ceil(needed)}</strong> → średnia ~<strong>${((currentAvg * best.n + Math.ceil(needed) * futureCount) / (best.n + futureCount)).toFixed(2).replace('.',',')}</strong>
+    </div>
+  `;
+};
+
+function initCalc() {
+  const sel = document.getElementById('calc-subject');
+  subjects.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.avg;
+    opt.textContent = s.name + ' (śr. ' + s.avg.toFixed(2).replace('.',',') + ')';
+    sel.appendChild(opt);
+  });
 }
 
 // --- Timetable ---
 const timetable = [
-  [ // Poniedziałek
+  [
     { time: '8:20', name: 'Matematyka', teacher: 'Magdalena Słuszniak' },
     { time: '9:10', name: 'Język polski', teacher: 'Agnieszka Tomczyk' },
     { time: '10:05', name: 'Matematyka w technice-D', teacher: 'Magdalena Słuszniak' },
@@ -705,7 +742,7 @@ const timetable = [
     { time: '12:45', name: 'Wychowanie fizyczne', teacher: 'Jakub Cionek' },
     { time: '13:50', name: 'Wychowanie fizyczne', teacher: 'Jakub Cionek' },
   ],
-  [ // Wtorek
+  [
     { time: '7:30', name: 'Sieci komputerowe', teacher: 'Zbigniew Florczykiewicz' },
     { time: '8:20', name: 'Sieci komputerowe', teacher: 'Zbigniew Florczykiewicz' },
     { time: '9:10', name: 'Sieci komputerowe', teacher: 'Zbigniew Florczykiewicz' },
@@ -715,7 +752,7 @@ const timetable = [
     { time: '12:45', name: 'Matematyka', teacher: 'Magdalena Słuszniak' },
     { time: '13:50', name: 'Język polski', teacher: 'Agnieszka Tomczyk' },
   ],
-  [ // Środa
+  [
     { time: '7:30', name: 'Projektowanie stron internetowych', teacher: 'Zdzisław Krawiec' },
     { time: '8:20', name: 'Projektowanie stron internetowych', teacher: 'Zdzisław Krawiec' },
     { time: '9:10', name: 'Język angielski w branży teleinformatycznej', teacher: 'Monika Siemieniewska' },
@@ -725,7 +762,7 @@ const timetable = [
     { time: '12:45', name: 'Język polski', teacher: 'Agnieszka Tomczyk' },
     { time: '13:50', name: 'Chemia', teacher: 'Monika Siemieniewska' },
   ],
-  [ // Czwartek
+  [
     { time: '7:30', name: 'Programowanie aplikacji internetowych', teacher: 'Maciej Kowalczyk' },
     { time: '8:20', name: 'Programowanie aplikacji internetowych', teacher: 'Maciej Kowalczyk' },
     { time: '9:10', name: 'Język niemiecki', teacher: 'Magdalena Piórecka' },
@@ -735,7 +772,7 @@ const timetable = [
     { time: '12:45', name: 'Zajęcia z wychowawcą', teacher: 'Anna Rajca' },
     { time: '13:50', name: 'Wychowanie fizyczne', teacher: 'Jakub Cionek' },
   ],
-  [ // Piątek
+  [
     { time: '7:30', name: 'Język angielski', teacher: 'Marta Sidor' },
     { time: '8:20', name: 'Język angielski', teacher: 'Marta Sidor' },
     { time: '9:10', name: 'Historia', teacher: 'Jan Kotyniewicz' },
@@ -746,122 +783,32 @@ const timetable = [
 ];
 
 const subjectColors = {
-  'Matematyka':                                    'sch-red',
-  'Matematyka w technice-D':                       'sch-red',
-  'Język polski':                                  'sch-amber',
-  'Chemia':                                        'sch-green',
-  'Wychowanie fizyczne':                           'sch-teal',
-  'Sieci komputerowe':                             'sch-purple',
-  'Projektowanie stron internetowych':             'sch-blue',
-  'Język angielski w branży teleinformatycznej':   'sch-blue',
-  'Informatyka':                                   'sch-indigo',
+  'Matematyka': 'sch-red', 'Matematyka w technice-D': 'sch-red',
+  'Język polski': 'sch-amber', 'Chemia': 'sch-green',
+  'Wychowanie fizyczne': 'sch-teal', 'Sieci komputerowe': 'sch-purple',
+  'Projektowanie stron internetowych': 'sch-blue',
+  'Język angielski w branży teleinformatycznej': 'sch-blue',
+  'Informatyka': 'sch-indigo',
   'Projektowanie i administrowanie bazami danych': 'sch-indigo',
-  'Programowanie aplikacji internetowych':         'sch-pink',
-  'Język angielski':                               'sch-teal',
-  'Język niemiecki':                               'sch-orange',
-  'Historia':                                      'sch-amber',
-  'Historia i teraźniejszość':                     'sch-amber',
-  'Zajęcia z wychowawcą':                         'sch-gray',
+  'Programowanie aplikacji internetowych': 'sch-pink',
+  'Język angielski': 'sch-teal', 'Język niemiecki': 'sch-orange',
+  'Historia': 'sch-amber', 'Historia i teraźniejszość': 'sch-amber',
+  'Zajęcia z wychowawcą': 'sch-gray',
 };
 
-function subjectColor(name) {
-  return subjectColors[name] || 'sch-gray';
-}
-
-function showDay(dayIdx, btn) {
+window.showDay = (dayIdx, btn) => {
   document.querySelectorAll('[id^="day-btn-"]').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   const list = document.getElementById('schedule-list');
   const lessons = timetable[dayIdx];
-  if (!lessons || !lessons.length) {
-    list.innerHTML = '<div class="empty">Brak lekcji 🎉</div>';
-    return;
-  }
-  list.innerHTML = lessons.map((l) => `
-    <div class="schedule-item ${subjectColor(l.name)}">
+  if (!lessons || !lessons.length) { list.innerHTML = '<div class="empty">Brak lekcji 🎉</div>'; return; }
+  list.innerHTML = lessons.map(l => `
+    <div class="schedule-item ${subjectColors[l.name] || 'sch-gray'}">
       <div class="sch-time">${l.time}</div>
-      <div>
-        <div class="sch-name">${l.name}</div>
-        <div class="sch-room">${l.teacher}</div>
-      </div>
+      <div><div class="sch-name">${l.name}</div><div class="sch-room">${l.teacher}</div></div>
     </div>
   `).join('');
-}
-
-// --- Grade Calculator ---
-function initCalc() {
-  const sel = document.getElementById('calc-subject');
-  subjects.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s.avg;
-    opt.textContent = s.name + ' (śr. ' + s.avg.toFixed(2).replace('.',',') + ')';
-    sel.appendChild(opt);
-  });
-  sel.addEventListener('change', () => document.getElementById('calc-result').style.display = 'none');
-}
-
-function calcGrade() {
-  const currentAvg = parseFloat(document.getElementById('calc-subject').value);
-  const subjectName = document.getElementById('calc-subject').options[document.getElementById('calc-subject').selectedIndex].text;
-  const target = parseFloat(document.getElementById('calc-target').value);
-  const futureCount = parseInt(document.getElementById('calc-future').value) || 1;
-
-  // Find how many grades the subject currently has (sem 2)
-  const subjectData = subjects.find(s => Math.abs(s.avg - currentAvg) < 0.01);
-  // We don't store grade count, so we estimate from avg — user can adjust "future count"
-  // Formula: needed = (target * (n + futureCount) - currentAvg * n) / futureCount
-  // We try n=1..10 to find best fit — use n that makes sense
-  // Actually: let user just pick future count; show needed grade per future ocena
-  // needed_per_grade = target + (target - currentAvg) * n / futureCount
-  // Better: total needed sum = target*(n+f) - currentAvg*n, per grade = that/f
-  // We'll just show for n=current count estimated
-
-  const resultEl = document.getElementById('calc-result');
-  const inner = document.getElementById('calc-result-inner');
-  resultEl.style.display = 'block';
-
-  // Try different assumed current grade counts
-  const rows = [];
-  for (let n = 1; n <= 8; n++) {
-    const needed = (target * (n + futureCount) - currentAvg * n) / futureCount;
-    if (needed >= 1 && needed <= 6) {
-      rows.push({ n, needed });
-    }
-  }
-
-  if (!rows.length) {
-    const needed = (target * (1 + futureCount) - currentAvg * 1) / futureCount;
-    inner.innerHTML = `
-      <div style="font-size:13px;color:var(--muted);margin-bottom:8px">Przy obecnej średniej <strong>${currentAvg.toFixed(2).replace('.',',')}</strong> i celu <strong>${target.toFixed(1).replace('.',',')}</strong>:</div>
-      <div style="font-size:15px;color:var(--red)">Potrzebna ocena <strong>${needed.toFixed(1).replace('.',',')}</strong> — poza skalą 1–6. Cel może być zbyt ambitny przy obecnych ocenach.</div>
-    `;
-    return;
-  }
-
-  // Show result for the most likely scenario
-  const best = rows[Math.floor(rows.length / 2)];
-  const needed = best.needed;
-  const color = needed <= 3 ? 'var(--teal)' : needed <= 4.5 ? 'var(--amber)' : needed <= 6 ? 'var(--red)' : 'var(--muted)';
-  const emoji = needed <= 3 ? '😊' : needed <= 4.5 ? '💪' : '🔥';
-  const comment = needed <= 2 ? 'Łatwe do osiągnięcia!' : needed <= 3.5 ? 'Realne przy solidnej nauce.' : needed <= 4.5 ? 'Wymagające, ale możliwe.' : needed <= 5.5 ? 'Bardzo trudne — musisz się porządnie przyłożyć.' : 'Praktycznie niemożliwe — rozważ niższy cel.';
-
-  inner.innerHTML = `
-    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">
-      Obecna średnia: <strong>${currentAvg.toFixed(2).replace('.',',')}</strong> · Cel: <strong>${target.toFixed(1).replace('.',',')}</strong> · Kolejne oceny: <strong>${futureCount}</strong>
-    </div>
-    <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
-      <div style="font-size:42px;font-weight:500;color:${color}">${needed.toFixed(1).replace('.',',')}</div>
-      <div>
-        <div style="font-size:15px;font-weight:500">musisz dostać średnio za ocenę ${emoji}</div>
-        <div style="font-size:13px;color:var(--muted);margin-top:2px">${comment}</div>
-      </div>
-    </div>
-    <div style="font-size:12px;color:var(--muted);padding-top:10px;border-top:1px solid var(--border)">
-      Jeśli dostaniesz ${futureCount > 1 ? 'po' : ''} <strong>${Math.ceil(needed)}</strong> — średnia wyniesie ~<strong>${((currentAvg * best.n + Math.ceil(needed) * futureCount) / (best.n + futureCount)).toFixed(2).replace('.',',')}</strong>
-      ${needed % 1 !== 0 ? ` · przy <strong>${Math.floor(needed)}</strong> wyniesie ~<strong>${((currentAvg * best.n + Math.floor(needed) * futureCount) / (best.n + futureCount)).toFixed(2).replace('.',',')}</strong>` : ''}
-    </div>
-  `;
-}
+};
 
 // --- Date ---
 function updateDate() {
@@ -875,11 +822,9 @@ function updateDate() {
 
 // --- Init ---
 updateDate();
-render();
 renderSubjects();
 initCalc();
-renderFullList();
-const todayIdx = new Date().getDay(); // 0=Sun,1=Mon,...,6=Sat
+const todayIdx = new Date().getDay();
 const scheduleDay = (todayIdx >= 1 && todayIdx <= 5) ? todayIdx - 1 : 0;
 const dayBtn = document.getElementById('day-btn-' + scheduleDay);
 if (dayBtn) dayBtn.classList.add('active');
@@ -887,3 +832,4 @@ showDay(scheduleDay, dayBtn);
 </script>
 </body>
 </html>
+if (localStorage.getItem(STORAGE_KEY + '_version') !== TASKS_VERSION) {
